@@ -489,6 +489,91 @@ void Millipede::start()
                     }
                 }
             } break;
+
+// XXX OBCH XXX
+            case EventType::kFromSrc: {
+                int offset_in_current_buffer = rx_tag_t(event.data).offset;
+                int socket_thread_id = rx_tag_t(event.data).tid;
+
+                char* socket_buffer_ptr = socket_buffer_[socket_thread_id]
+                    + (long long)offset_in_current_buffer * cfg->packet_length;
+                struct Packet* pkt = (struct Packet*)socket_buffer_ptr;
+
+                frame_count = pkt->frame_id % 10000;
+                size_t frame_id = frame_count % TASK_BUFFER_FRAME_NUM;
+                int subframe_id = pkt->symbol_id;
+
+                update_rx_counters(frame_count, frame_id, subframe_id);
+                if (config_->bigstation_mode) {
+                    /* In BigStation, schedule FFT whenever a packet is RX */
+                    if (cur_frame_id != frame_id) {
+                        stats_manager_->update_processing_started(frame_count);
+                        cur_frame_id = frame_id;
+                    }
+                }
+
+                fft_queue_arr[frame_id].push(fft_req_tag_t(event.data));
+            } break;
+
+            case EventType::kToSink: {
+                /* Data is sent */
+                int offset = event.data;
+                int ant_id = offset % cfg->BS_ANT_NUM;
+                int total_data_subframe_id = offset / cfg->BS_ANT_NUM;
+                int frame_id
+                    = total_data_subframe_id / cfg->data_symbol_num_perframe;
+                int data_subframe_id
+                    = total_data_subframe_id % cfg->data_symbol_num_perframe;
+                // printf("In main thread: tx finished for ",
+                //     "frame %d subframe %d ant %d\n",
+                //     frame_id, data_subframe_id, ant_id);
+                frame_id = frame_id % TASK_BUFFER_FRAME_NUM;
+
+                print_per_task_done(
+                    PRINT_TX, frame_id, data_subframe_id, ant_id);
+                if (tx_stats_.last_task(frame_id, data_subframe_id)) {
+                    print_per_subframe_done(PRINT_TX, tx_stats_.frame_count,
+                        frame_id, data_subframe_id);
+                    /* If tx of the first symbol is done */
+                    if (data_subframe_id == (int)cfg->dl_data_symbol_start) {
+                        stats_manager_->update_tx_processed_first(
+                            tx_stats_.frame_count);
+                        print_per_frame_done(
+                            PRINT_TX_FIRST, tx_stats_.frame_count, frame_id);
+                    }
+                    if (tx_stats_.last_symbol(frame_id)) {
+                        stats_manager_->update_tx_processed(
+                            tx_stats_.frame_count);
+                        print_per_frame_done(
+                            PRINT_TX, tx_stats_.frame_count, frame_id);
+                        stats_manager_->update_stats_in_functions_downlink(
+                            tx_stats_.frame_count);
+                        if (stats_manager_->last_frame_id
+                            == config_->tx_frame_num - 1)
+                            goto finish;
+                        tx_stats_.update_frame_count();
+                    }
+
+                    tx_count++;
+                    if (tx_count == tx_stats_.max_symbol_count * 9000) {
+                        tx_count = 0;
+                        double diff = get_time() - tx_begin;
+                        int samples_num_per_UE = cfg->OFDM_DATA_NUM
+                            * tx_stats_.max_symbol_count * 1000;
+
+                        printf("TX %d samples (per-client) to %zu clients "
+                               "in %f secs, throughtput %f bps per-client "
+                               "(16QAM), current tx queue length %zu\n",
+                            samples_num_per_UE, cfg->UE_NUM, diff,
+                            samples_num_per_UE * log2(16.0f) / diff,
+                            tx_queue_.size_approx());
+                        tx_begin = get_time();
+                    }
+                }
+
+            } break;
+// XXX OBCH XXX
+//
             default:
                 printf("Wrong event type in message queue!");
                 exit(0);

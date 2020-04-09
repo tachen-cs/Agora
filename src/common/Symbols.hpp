@@ -55,7 +55,9 @@ enum class EventType : int {
     kEncode,
     kRC,
     kRXSymbol,
-    kInvalid
+    kInvalid,
+    kFromSrc,   // OBCH
+    kToSink     // OBCH
 };
 
 #define PRINT_RX_PILOTS 0

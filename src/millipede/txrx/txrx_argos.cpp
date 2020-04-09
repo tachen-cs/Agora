@@ -79,12 +79,102 @@ bool PacketTXRX::startTXRX(Table<char>& in_buffer, Table<int>& in_buffer_status,
         }
     }
 
+    // XXX OBCH XXX
+    printf("create upper layer comm. threads (Source/Sink) \n");
+    pthread_t srcsink_thread;
+    auto context = new EventHandlerContext<PacketTXRX>;
+    context->obj_ptr = this;
+    context->id = 0;
+    if (pthread_create(&srcsink_thread, NULL, pthread_fun_wrapper<PacketTXRX, &PacketTXRX::loopSRCSINK>, context) != 0) {
+        perror("socket src/sink communication thread create failed");
+        exit(0);
+    }
+    // XXX OBCH END XXX
+
     sleep(1);
     pthread_cond_broadcast(&cond);
     // sleep(1);
     radioconfig_->go();
     return true;
 }
+
+
+// XXX OBCH XXX
+void* PacketTXRX::loopSRCSINK(int tid)
+{
+    pin_to_core_with_offset(ThreadType::kWorkerTXRX, core_id_, tid);
+    double* rx_frame_start = (*frame_start_)[tid];
+    int rx_offset = 0;	
+    
+    // Use mutex to sychronize data receiving across threads
+    pthread_mutex_lock(&mutex);
+    printf("Thread %d: waiting for release\n", tid);
+
+    pthread_cond_wait(&cond, &mutex);
+    pthread_mutex_unlock(&mutex); // unlocking for all other threads
+
+
+    while (config_->running) {
+
+	/*   
+        // receive data
+        if (-1 != dequeue_send(tid))
+            continue;
+        rx_offset = rx_offset % buffer_frame_num_;
+        struct Packet* pkt = recv_enqueue(tid, radio_id, rx_offset);
+        if (pkt == NULL)
+            continue;
+        int frame_id = pkt->frame_id;
+         */
+
+
+	 int ret;
+	 // Read from source packet queue 
+         ret = read_from_src(tid);
+	 // Write to sink packet queue
+         ret = write_to_sink(tid);
+
+    }
+    return 0;
+}
+
+
+int PacketTXRX::read_from_src(int tid, int rx_offset)
+{
+    moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
+    char* rx_buffer = (*buffer_)[tid];
+    int* rx_buffer_status = (*buffer_status_)[tid];
+
+    // Push kPacketRX event into the queue.
+    Event_data rx_message(
+    EventType::kPacketRX, rx_tag_t(tid, rx_offset + ch)._tag);
+
+    if (!message_queue_->enqueue(*local_ptok, rx_message)) {
+        printf("socket message enqueue failed\n");
+        exit(0);
+    }
+
+}
+
+
+int PacketTXRX::write_to_sink(int tid)
+{
+    Event_data task_event;
+    if (!task_queue_->try_dequeue_from_producer(*tx_ptoks_[tid], task_event))
+        return -1;
+
+    // printf("tx queue length: %d\n", task_queue_->size_approx());
+    if (task_event.event_type != EventType::kPacketTX) {
+        printf("Wrong event type!");
+        exit(0);
+    }
+
+
+
+}
+// XXX OBCH END XXX
+
+
 
 void* PacketTXRX::loopTXRX(int tid)
 {
