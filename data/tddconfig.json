@@ -21,5 +21,6 @@
  "downlink_mode": true,
  "worker_thread_num" : 25,
  "demul_block_size" : 48,
- "bs_ant_num": 8
+ "bs_ant_num": 8,
+ "network_src_sink": false
 }

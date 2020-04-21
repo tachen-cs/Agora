@@ -118,6 +118,8 @@ public:
      * receive thread
      */
     void* loopTXRX(int tid);
+    void* loopSRCSINK(int tid);  // XXX OBCH XXX
+
 #if USE_IPV4
     typedef struct sockaddr_in sockaddr_t;
 #else
@@ -125,6 +127,12 @@ public:
 #endif
     int dequeue_send(int tid);
     struct Packet* recv_enqueue(int tid, int radio_id, int rx_offset);
+
+    // XXX OBCH XXX
+    Table<int8_t> dl_IQ_data;
+    Table<int8_t> ul_IQ_data;
+    // XXX OBCH END XXX
+
 #ifdef USE_DPDK
     static void* loopRecv_DPDK(void* context);
 #endif

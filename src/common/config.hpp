@@ -140,6 +140,13 @@ public:
     /* LDPC parameters */
     LDPCconfig LDPC_config;
 
+    /* Enable Upper Layers XXX OBCH XXX */
+    bool network_src_sink;
+    int mac_port;
+    int uphy_port;
+    std::string src_sink_addr;  // millipede will act as server
+    // XXX OBCH END XXX
+
     bool isUE;
     const size_t maxFrame = 1 << 30;
     const size_t data_offset = sizeof(int) * 16;

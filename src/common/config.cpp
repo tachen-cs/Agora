@@ -68,6 +68,7 @@ Config::Config(std::string jsonfile)
     ue_tx_port = tddConf.value("ue_tx_port", 6000);
 
     /* frame configurations */
+    network_src_sink = tddConf.value("network_src_sink", true);  // XXX OBCH XXX
     auto symbolSize = tddConf.value("symbol_size", 1);
     prefix = tddConf.value("prefix", 0);
     dl_prefix = tddConf.value("dl_prefix", 0);

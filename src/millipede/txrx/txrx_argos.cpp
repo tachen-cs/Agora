@@ -17,6 +17,15 @@ PacketTXRX::PacketTXRX(Config* cfg, int COMM_THREAD_NUM, int in_core_offset)
     /* initialize random seed: */
     srand(time(NULL));
 
+    // XXX OBCH XXX
+    socket_ = new int[COMM_THREAD_NUM];
+#if USE_IPV4
+    servaddr_ = new struct sockaddr_in[COMM_THREAD_NUM];
+#else
+    servaddr_ = new struct sockaddr_in6[COMM_THREAD_NUM];
+#endif
+    // XXX OBCH XXX
+
     radioconfig_ = new RadioConfig(config_);
 }
 
@@ -36,6 +45,8 @@ PacketTXRX::PacketTXRX(Config* cfg, int COMM_THREAD_NUM, int in_core_offset,
 PacketTXRX::~PacketTXRX()
 {
     radioconfig_->radioStop();
+    delete[] socket_;             // XXX OBCH XXX
+    delete servaddr_;		  // XXX OBCH XXX
     delete radioconfig_;
 }
 
@@ -103,74 +114,101 @@ bool PacketTXRX::startTXRX(Table<char>& in_buffer, Table<int>& in_buffer_status,
 void* PacketTXRX::loopSRCSINK(int tid)
 {
     pin_to_core_with_offset(ThreadType::kWorkerTXRX, core_id_, tid);
-    double* rx_frame_start = (*frame_start_)[tid];
-    int rx_offset = 0;	
-    
-    // Use mutex to sychronize data receiving across threads
-    pthread_mutex_lock(&mutex);
-    printf("Thread %d: waiting for release\n", tid);
 
-    pthread_cond_wait(&cond, &mutex);
-    pthread_mutex_unlock(&mutex); // unlocking for all other threads
+    int sock_buf_size = 1024 * 1024 * 64 * 8 - 1;
+    int local_port_id = config_->uphy_port + tid;
+
+#if USE_IPV4
+    socket_[tid] = setup_socket_ipv4(local_port_id, true, sock_buf_size);
+    setup_sockaddr_remote_ipv4(
+        &servaddr_[tid], config_->mac_port + tid, config_->src_sink_addr.c_str());
+#else
+    socket_[tid] = setup_socket_ipv6(local_port_id, true, sock_buf_size);
+    setup_sockaddr_remote_ipv6(
+        &servaddr_[tid], config_->mac_port + tid, config_->src_sink_addr.c_str());
+#endif
+
+    /* Read from source */
+    char* buffer_ptr = (*buffer_)[tid];
+    int* buffer_status_ptr = (*buffer_status_)[tid];
+    long long buffer_length = buffer_length_;
+    int buffer_frame_num = buffer_frame_num_;
+    char* cur_buffer_ptr = buffer_ptr;
+    int* cur_buffer_status_ptr = buffer_status_ptr;
+    socklen_t addrlen = sizeof(remote_addr);
+    size_t offset = 0;
+    /* Read from source END */
+
+
+    /* Write to sink */
+    int packet_length = config_->packet_length;
+    char* cur_buffer_ptr_up = tx_buffer_ + socket_subframe_offset * packet_length;
+    /* Write to sink END */
 
 
     while (config_->running) {
 
-	/*   
-        // receive data
-        if (-1 != dequeue_send(tid))
-            continue;
-        rx_offset = rx_offset % buffer_frame_num_;
-        struct Packet* pkt = recv_enqueue(tid, radio_id, rx_offset);
-        if (pkt == NULL)
-            continue;
-        int frame_id = pkt->frame_id;
-         */
+        /* READ from source packet queue
+         (1) Check if we are ready to process next frame
+         (2) Check if frame available at upper phy queue
+         (3) Read frame and put into ____ buffer TODO  */
+
+        /* if buffer is full, exit */
+        if (cur_buffer_status_ptr[0] == 1) {
+            printf("Receive thread %d buffer full, offset: %zu\n", tid, offset);
+            exit(0);
+        }
+
+        int recvlen = -1;
+        if ((recvlen = recvfrom(socket_local, (char*)cur_buffer_ptr,
+                 cfg->packet_length, 0, (struct sockaddr*)&remote_addr,  // TODO - packet length
+                 &addrlen))
+            < 0) {
+            perror("recv failed");
+            exit(0);
+        }
+
+        /* get the position in buffer */
+        offset = cur_buffer_status_ptr - buffer_status_ptr;
+        cur_buffer_status_ptr[0] = 1;
+        cur_buffer_status_ptr
+            = buffer_status_ptr + (offset + 1) % buffer_frame_num;
+        cur_buffer_ptr = buffer_ptr
+            + (cur_buffer_ptr - buffer_ptr + cfg->packet_length)
+                % buffer_length;
+
+        /* Push packet-received-from-source event into the queue */
+        Event_data packet_message(
+            EventType::kFromSrc, rx_tag_t(tid, offset)._tag);
+
+        if (!message_queue_->enqueue(*local_ptok, packet_message)) {
+            printf("socket message enqueue failed\n");
+            exit(0);
+        }
 
 
-	 int ret;
-	 // Read from source packet queue 
-         ret = read_from_src(tid);
-	 // Write to sink packet queue
-         ret = write_to_sink(tid);
+        /* WRITE to sink packet queue
+         (1) Get packet from decoder
+         (2) Write to buffer used for transmission TODO */
+        cur_buffer_ptr_up = (uint8_t*)decoded_buffer_[symbol_offset]; // XXX FIXME - ASSIGN XXX 
+        if (sendto(socket_[tid], (char*)cur_buffer_ptr_up, packet_length, 0,
+                (struct sockaddr*)&servaddr_[tid], sizeof(servaddr_[tid]))
+            < 0) {
+            perror("socket sendto failed");
+            exit(0);
+        }
+
+        /* Push packet-sent-to-sink-event into the queue */
+        Event_data packet_message(
+            EventType::kToSink, rx_tag_t(tid, offset)._tag);
+
+        if (!message_queue_->enqueue(*local_ptok, packet_message)) {
+            printf("socket message enqueue failed\n");
+            exit(0);
+        }
 
     }
     return 0;
-}
-
-
-int PacketTXRX::read_from_src(int tid, int rx_offset)
-{
-    moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
-    char* rx_buffer = (*buffer_)[tid];
-    int* rx_buffer_status = (*buffer_status_)[tid];
-
-    // Push kPacketRX event into the queue.
-    Event_data rx_message(
-    EventType::kPacketRX, rx_tag_t(tid, rx_offset + ch)._tag);
-
-    if (!message_queue_->enqueue(*local_ptok, rx_message)) {
-        printf("socket message enqueue failed\n");
-        exit(0);
-    }
-
-}
-
-
-int PacketTXRX::write_to_sink(int tid)
-{
-    Event_data task_event;
-    if (!task_queue_->try_dequeue_from_producer(*tx_ptoks_[tid], task_event))
-        return -1;
-
-    // printf("tx queue length: %d\n", task_queue_->size_approx());
-    if (task_event.event_type != EventType::kPacketTX) {
-        printf("Wrong event type!");
-        exit(0);
-    }
-
-
-
 }
 // XXX OBCH END XXX
 
