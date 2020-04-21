@@ -20,9 +20,9 @@ PacketTXRX::PacketTXRX(Config* cfg, int COMM_THREAD_NUM, int in_core_offset)
     // XXX OBCH XXX
     socket_ = new int[COMM_THREAD_NUM];
 #if USE_IPV4
-    servaddr_ = new struct sockaddr_in[COMM_THREAD_NUM];
+    remote_addr_ = new struct sockaddr_in[COMM_THREAD_NUM];
 #else
-    servaddr_ = new struct sockaddr_in6[COMM_THREAD_NUM];
+    remote_addr_ = new struct sockaddr_in6[COMM_THREAD_NUM];
 #endif
     // XXX OBCH XXX
 
@@ -46,7 +46,7 @@ PacketTXRX::~PacketTXRX()
 {
     radioconfig_->radioStop();
     delete[] socket_;             // XXX OBCH XXX
-    delete servaddr_;		  // XXX OBCH XXX
+    delete remote_addr_;		  // XXX OBCH XXX
     delete radioconfig_;
 }
 
@@ -116,16 +116,16 @@ void* PacketTXRX::loopSRCSINK(int tid)
     pin_to_core_with_offset(ThreadType::kWorkerTXRX, core_id_, tid);
 
     int sock_buf_size = 1024 * 1024 * 64 * 8 - 1;
-    int local_port_id = config_->uphy_port + tid;
+    int local_port_id = config_->millipede_up_port + tid;
 
 #if USE_IPV4
     socket_[tid] = setup_socket_ipv4(local_port_id, true, sock_buf_size);
     setup_sockaddr_remote_ipv4(
-        &servaddr_[tid], config_->mac_port + tid, config_->src_sink_addr.c_str());
+        &remote_addr_[tid], config_->src_sink_port + tid, config_->src_sink_addr.c_str());
 #else
     socket_[tid] = setup_socket_ipv6(local_port_id, true, sock_buf_size);
     setup_sockaddr_remote_ipv6(
-        &servaddr_[tid], config_->mac_port + tid, config_->src_sink_addr.c_str());
+        &remote_addr_[tid], config_->src_sink_port + tid, config_->src_sink_addr.c_str());
 #endif
 
     /* Read from source */
@@ -135,9 +135,10 @@ void* PacketTXRX::loopSRCSINK(int tid)
     int buffer_frame_num = buffer_frame_num_;
     char* cur_buffer_ptr = buffer_ptr;
     int* cur_buffer_status_ptr = buffer_status_ptr;
-    socklen_t addrlen = sizeof(remote_addr);
+    socklen_t addrlen = sizeof(remote_addr_[tid]);
     size_t offset = 0;
     /* Read from source END */
+
 
 
     /* Write to sink */
@@ -148,10 +149,13 @@ void* PacketTXRX::loopSRCSINK(int tid)
 
     while (config_->running) {
 
-        /* READ from source packet queue
+        /* 
+         READ from source packet queue
          (1) Check if we are ready to process next frame
          (2) Check if frame available at upper phy queue
-         (3) Read frame and put into ____ buffer TODO  */
+         (3) Read frame and put into cur_buffer_ptr
+         (4) Reshape frame (let's "broadcast", replicate depending on number of UEs)
+         */
 
         /* if buffer is full, exit */
         if (cur_buffer_status_ptr[0] == 1) {
@@ -161,12 +165,15 @@ void* PacketTXRX::loopSRCSINK(int tid)
 
         int recvlen = -1;
         if ((recvlen = recvfrom(socket_local, (char*)cur_buffer_ptr,
-                 cfg->packet_length, 0, (struct sockaddr*)&remote_addr,  // TODO - packet length
+                 cfg->packet_length, 0, (struct sockaddr*)&remote_addr_[tid],  // TODO - packet length
                  &addrlen))
             < 0) {
             perror("recv failed");
             exit(0);
         }
+
+        char* pkt_dwn;
+        pkt_dwn = cur_buffer_ptr;
 
         /* get the position in buffer */
         offset = cur_buffer_status_ptr - buffer_status_ptr;
@@ -186,27 +193,46 @@ void* PacketTXRX::loopSRCSINK(int tid)
             exit(0);
         }
 
+        /* Reshape here ??? TODO, or in millipede.cpp? */
+        // THIS IS WHAT dl_IQ_data expects (Table<int8_t> dl_IQ_data;)       
+        //dl_IQ_data.malloc(dl_data_symbol_num_perframe, OFDM_DATA_NUM * UE_ANT_NUM, 64);
+        // Dimension 1: dl_data_symbol_num_perframe
+        // Dimension 2: OFDM_DATA_NUM * UE_ANT_NUM, e.g., 100 * 2
+        // [UE0_OFDM0, UE1_OFDM0, UE0_OFDM1 UE1_OFDM1]
+        // FIXME - data from pkt_dwn
+        for (size_t i = 0; i < dl_data_symbol_num_perframe; i++) {
+            std::vector<int8_t> in_modul;
+            for (size_t ue_id = 0; ue_id < UE_ANT_NUM; ue_id++) {
+                for (size_t j = 0; j < OFDM_DATA_NUM; j++) {
+                    int cur_offset = j * UE_ANT_NUM + ue_id;
+                    dl_IQ_data[i][cur_offset] = rand() % mod_order;
+                    if (ue_id == 0)
+                        in_modul.push_back(dl_IQ_data[i][cur_offset]);
+                }
+            }
+        }
 
         /* WRITE to sink packet queue
          (1) Get packet from decoder
          (2) Write to buffer used for transmission TODO */
-        cur_buffer_ptr_up = (uint8_t*)decoded_buffer_[symbol_offset]; // XXX FIXME - ASSIGN XXX 
-        if (sendto(socket_[tid], (char*)cur_buffer_ptr_up, packet_length, 0,
-                (struct sockaddr*)&servaddr_[tid], sizeof(servaddr_[tid]))
-            < 0) {
-            perror("socket sendto failed");
-            exit(0);
+        if (packet available in decoded_buffer_) {   // FIXME
+            cur_buffer_ptr_up = (uint8_t*)decoded_buffer_[symbol_offset]; // XXX FIXME - ASSIGN XXX 
+            if (sendto(socket_[tid], (char*)cur_buffer_ptr_up, packet_length, 0,
+                    (struct sockaddr*)&servaddr_[tid], sizeof(servaddr_[tid]))
+                < 0) {
+                perror("socket sendto failed");
+                exit(0);
+            }
+
+            /* Push packet-sent-to-sink-event into the queue */
+            Event_data packet_message(
+                EventType::kToSink, rx_tag_t(tid, offset)._tag);
+
+            if (!message_queue_->enqueue(*local_ptok, packet_message)) {
+                printf("socket message enqueue failed\n");
+                exit(0);
+            }
         }
-
-        /* Push packet-sent-to-sink-event into the queue */
-        Event_data packet_message(
-            EventType::kToSink, rx_tag_t(tid, offset)._tag);
-
-        if (!message_queue_->enqueue(*local_ptok, packet_message)) {
-            printf("socket message enqueue failed\n");
-            exit(0);
-        }
-
     }
     return 0;
 }

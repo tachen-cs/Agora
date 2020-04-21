@@ -68,7 +68,15 @@ Config::Config(std::string jsonfile)
     ue_tx_port = tddConf.value("ue_tx_port", 6000);
 
     /* frame configurations */
-    network_src_sink = tddConf.value("network_src_sink", true);  // XXX OBCH XXX
+    // XXX OBCH XXX
+    network_src_sink = tddConf.value("network_src_sink", true);
+    src_sink_addr = tddConf.value("src_sink_addr", "127.0.0.2");
+    millipede_up_port = tddConf.value("millipede_up_port", 8000);
+    src_sink_port = tddConf.value("src_sink_port", 9000);
+    // XXX OBCH END XXX
+
+
+
     auto symbolSize = tddConf.value("symbol_size", 1);
     prefix = tddConf.value("prefix", 0);
     dl_prefix = tddConf.value("dl_prefix", 0);

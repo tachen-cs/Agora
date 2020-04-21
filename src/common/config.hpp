@@ -140,11 +140,12 @@ public:
     /* LDPC parameters */
     LDPCconfig LDPC_config;
 
-    /* Enable Upper Layers XXX OBCH XXX */
+    // XXX OBCH XXX 
+    /* Enable Upper Layers */
     bool network_src_sink;
-    int mac_port;
-    int uphy_port;
     std::string src_sink_addr;  // millipede will act as server
+    int millipede_up_port;
+    int src_sink_port;
     // XXX OBCH END XXX
 
     bool isUE;

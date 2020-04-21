@@ -131,6 +131,7 @@ public:
     // XXX OBCH XXX
     Table<int8_t> dl_IQ_data;
     Table<int8_t> ul_IQ_data;
+
     // XXX OBCH END XXX
 
 #ifdef USE_DPDK
@@ -139,9 +140,10 @@ public:
 
 private:
 #if USE_IPV4
-    struct sockaddr_in* servaddr_; /* server address */
+    struct sockaddr_in* servaddr_;   /* server address */
+    struct sockaddr_in* remote_addr_; // XXX OBCH XXX
 #else
-    struct sockaddr_in6* servaddr_; /* server address */
+    struct sockaddr_in6* servaddr_;  /* server address */
 #endif
     int* socket_;
 

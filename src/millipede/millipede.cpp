@@ -497,12 +497,17 @@ void Millipede::start()
 
                 char* socket_buffer_ptr = socket_buffer_[socket_thread_id]
                     + (long long)offset_in_current_buffer * cfg->packet_length;
-                struct Packet* pkt = (struct Packet*)socket_buffer_ptr;
+
+
+
+
             } break;
 
             case EventType::kToSink: {
                 /* Data sent to upper layers */
-	        // Collect stats 
+	            // Collect stats 
+
+
 
             } break;
 // XXX OBCH END XXX
