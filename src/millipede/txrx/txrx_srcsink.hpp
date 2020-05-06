@@ -84,12 +84,13 @@ public:
 
 private:
 #if USE_IPV4
-    struct sockaddr_in* servaddr_;   /* server address */
-    struct sockaddr_in* remote_addr_; // XXX OBCH XXX
+    struct sockaddr_in* remote_addr_;
 #else
-    struct sockaddr_in6* servaddr_;  /* server address */
+    struct sockaddr_in6* remote_addr_;  /* server address */
 #endif
     int* socket_;
+    char* socket_up_buffer_;
+    int sock_buf_size_;
 
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
@@ -103,8 +104,6 @@ private:
     int* tx_buffer_status_;
     long long tx_buffer_length_;
     int tx_buffer_frame_num_;
-
-    char* socket_up_buffer_;
 
     int comm_thread_num_;
 

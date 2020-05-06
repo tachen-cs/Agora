@@ -114,6 +114,7 @@ private:
     int max_equaled_frame = 0;
     // int max_packet_num_per_frame;
     std::unique_ptr<PacketTXRX> receiver_;
+    std::unique_ptr<SrcSinkComm> src_snk_ptr_;  // OBCH XXX
     Stats* stats_manager_;
     // std::unique_ptr<Stats> stats_manager_;
     // pthread_t task_threads[TASK_THREAD_NUM];
@@ -137,6 +138,21 @@ private:
     long long socket_buffer_size_;
     int socket_buffer_status_size_;
 
+    /* To Sink (from millipede to upper layer) */
+    /**
+     * send data to upper layres
+     * Frist dimension: SOCKET_THREAD_NUM
+     * Second dimension of buffer (type: char): packet_length *
+     * subframe_num_perframe * BS_ANT_NUM * SOCKET_BUFFER_FRAME_NUM
+     * packet_length = sizeof(int) * 4 + sizeof(ushort) * OFDM_FRAME_LEN * 2;
+     * Second dimension of buffer_status: subframe_num_perframe * BS_ANT_NUM *
+     * SOCKET_BUFFER_FRAME_NUM
+     */
+    Table<char> hi_socket_buffer_;
+    Table<int> hi_socket_buffer_status_;
+    long long hi_socket_buffer_size_;
+    int hi_socket_buffer_status_size_;
+   
     /**
      * Estimated CSI data
      * First dimension: OFDM_CA_NUM * TASK_BUFFER_FRAME_NUM
@@ -246,6 +262,21 @@ private:
     int* dl_socket_buffer_status_;
     long long dl_socket_buffer_size_;
     int dl_socket_buffer_status_size_;
+
+    /**
+     * From Source (downlink - from upper layer)
+     * Get data from source and process it
+     * First dimension of buffer (type: char): subframe_num_perframe *
+     * SOCKET_BUFFER_FRAME_NUM Second dimension: packet_length * BS_ANT_NUM
+     * packet_length = sizeof(int) * 4 + sizeof(ushort) * OFDM_FRAME_LEN * 2;
+     * First dimension of buffer_status: subframe_num_perframe * BS_ANT_NUM *
+     * SOCKET_BUFFER_FRAME_NUM
+     */
+    char* hi_dl_socket_buffer_;
+    int* hi_dl_socket_buffer_status_;
+    long long hi_dl_socket_buffer_size_;
+    int hi_dl_socket_buffer_status_size_;
+
 
     /*****************************************************
      * Concurrent queues

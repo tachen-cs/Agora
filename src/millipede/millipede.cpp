@@ -40,6 +40,12 @@ Millipede::Millipede(Config* cfg)
         new PacketTXRX(config_, cfg->socket_thread_num, cfg->core_offset + 1,
             &message_queue_, &tx_queue_, rx_ptoks_ptr, tx_ptoks_ptr));
 
+    // XXX OBCH FIXME XXX how to update offset? tx_queue?
+    /* Initialize SRC SINK Comm. threads*/
+    src_snk_ptr_.reset(
+        new SrcSinkComm(config_, cfg->socket_thread_num, cfg->core_offset + 1,
+            &message_queue_, &tx_queue_, rx_ptoks_ptr, tx_ptoks_ptr));
+
     /* Create worker threads */
     if (config_->bigstation_mode) {
         create_threads(pthread_fun_wrapper<Millipede, &Millipede::worker_fft>,
@@ -68,6 +74,7 @@ void Millipede::stop()
     config_->running = false;
     usleep(1000);
     receiver_.reset();
+    src_snk_ptr_.reset();
 }
 
 void Millipede::start()
@@ -80,6 +87,16 @@ void Millipede::start()
             stats_manager_->frame_start, dl_socket_buffer_,
             dl_socket_buffer_status_, dl_socket_buffer_status_size_,
             dl_socket_buffer_size_)) {
+        this->stop();
+        return;
+    }
+
+    // XXX OBCH FIXME XXX
+    /* start src sink comm. */
+    if (!src_snk_ptr_->startComm(hi_socket_buffer_, hi_socket_buffer_status_,
+            hi_socket_buffer_status_size_, hi_socket_buffer_size_,
+            hi_dl_socket_buffer_, hi_dl_socket_buffer_status_, 
+	    hi_dl_socket_buffer_status_size_, hi_dl_socket_buffer_size_)) {
         this->stop();
         return;
     }
@@ -641,15 +658,13 @@ void* Millipede::worker(int tid)
 #ifdef USE_LDPC
         dl_encoded_buffer_,
 #else
-        //config_->dl_IQ_data,
-	dl_IQ_data,   // XXX OBCH XXX
+        config_->dl_IQ_data,
 #endif
         stats_manager_);
 
 #ifdef USE_LDPC
     auto* computeEncoding = new DoEncode(config_, tid, encode_queue_, consumer,
-        dl_IQ_data, dl_encoded_buffer_, stats_manager_);   // XXX OBCH XXX
-      //  config_->dl_IQ_data, dl_encoded_buffer_, stats_manager_);
+        config_->dl_IQ_data, dl_encoded_buffer_, stats_manager_);
     auto* computeDecoding = new DoDecode(config_, tid, decode_queue_, consumer,
         demod_soft_buffer_, decoded_buffer_, stats_manager_);
 #endif
@@ -737,8 +752,7 @@ void* Millipede::worker_demul(int tid)
 #ifdef USE_LDPC
         dl_encoded_buffer_,
 #else
-        //config_->dl_IQ_data,
-	dl_IQ_data,    // XXX OBCH XXX
+        config_->dl_IQ_data,
 #endif
         stats_manager_);
 
@@ -1128,6 +1142,18 @@ void Millipede::initialize_uplink_buffers()
     printf("Millipede: Initializing uplink buffers: socket buffer size %lld, "
            "socket buffer status size %d\n",
         socket_buffer_size_, socket_buffer_status_size_);
+
+    
+    (hi_socket_buffer_, hi_socket_buffer_status_,
+            hi_socket_buffer_status_size_, hi_socket_buffer_size_,
+            hi_dl_socket_buffer_, hi_dl_socket_buffer_status_, 
+	    hi_dl_socket_buffer_status_size_, hi_dl_socket_buffer_size_)
+
+    // XXX OBCH - might want to have a different number of socket threads for this
+    hi_socket_buffer_.malloc(
+        cfg->socket_thread_num, hi_socket_buffer_size_, 64);
+    hi_socket_buffer_status_.calloc(
+        cfg->socket_thread_num, hi_socket_buffer_status_size_, 64);
 
     socket_buffer_.malloc(
         cfg->socket_thread_num /* RX */, socket_buffer_size_, 64);
