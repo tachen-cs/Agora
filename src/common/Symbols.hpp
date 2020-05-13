@@ -137,7 +137,8 @@ enum class ThreadType {
     kWorkerTXRX,
     kMasterRX,
     kMasterTX,
-    kWorkerSrcSnk,   // XXX OBCH
+    kWorkerSrc,   // XXX OBCH
+    kWorkerSink,  // XXX OBCH
 };
 
 static inline std::string thread_type_str(ThreadType thread_type)
@@ -163,9 +164,11 @@ static inline std::string thread_type_str(ThreadType thread_type)
         return "Master (RX)";
     case ThreadType::kMasterTX:
         return "Master (TX)";
-    case ThreadType::kWorkerSrcSnk:  // XXX OBCH
-        return "Worker (Src/Sink)";
-    }
+    case ThreadType::kWorkerSrc:    // XXX OBCH
+        return "Worker (Src)";
+     case ThreadType::kWorkerSink:  // XXX OBCH
+        return "Worker (Sink)";
+   }
    return "Invalid thread type";
 }
 

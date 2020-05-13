@@ -18,7 +18,9 @@ SrcSinkComm::SrcSinkComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset)
 
     /* communicate with upper layers */
     socket_ = new int[COMM_THREAD_NUM];
-    sock_buf_size_ = 64000;
+    sock_buf_size_ = 1024 * 1024 * 64 * 8 - 1;
+    max_frame_size_ = 1500;   // might want to bring this to config files
+
 #if USE_IPV4
     remote_addr_ = new struct sockaddr_in[COMM_THREAD_NUM];
 #else
@@ -63,29 +65,7 @@ bool SrcSinkComm::startComm(Table<char>& in_buffer, Table<int>& in_buffer_status
     tx_buffer_frame_num_ = in_tx_buffer_frame_num;
     tx_buffer_length_ = in_tx_buffer_length;
 
-    printf("create upper layer comm. threads (source/sink) \n");
-    for (int i = 0; i < comm_thread_num_; i++) {
-        pthread_t srcsink_thread;
-        auto context = new EventHandlerContext<SrcSinkComm>;
-        context->obj_ptr = this;
-        context->id = i;
-        if (pthread_create(&srcsink_thread, NULL, pthread_fun_wrapper<SrcSinkComm, &SrcSinkComm::loopTXRX>, context) != 0) {
-            perror("socket src/sink communication thread create failed");
-            exit(0);
-        }
-    }
-    sleep(1);
-    pthread_cond_broadcast(&cond);
-    return true;
-}
-
-
-void* SrcSinkComm::loopTXRX(int tid)
-{
-    pin_to_core_with_offset(ThreadType::kWorkerSrcSnk, core_id_, tid);
-
     int local_port_id = config_->millipede_up_port + tid;
-
 #if USE_IPV4
     socket_[tid] = setup_socket_ipv4(local_port_id, true, sock_buf_size_);
     setup_sockaddr_remote_ipv4(
@@ -96,18 +76,65 @@ void* SrcSinkComm::loopTXRX(int tid)
         &remote_addr_[tid], config_->src_sink_port + tid, config_->src_sink_addr.c_str());
 #endif
 
-    socklen_t addrlen = sizeof(remote_addr_[tid]);
-    while (config_->running) {
+   printf("create upper layer comm. threads (source/sink) \n");
+    for (int i = 0; i < comm_thread_num_; i++) {
+        pthread_t src_thread;
+        auto context = new EventHandlerContext<SrcSinkComm>;
+        context->obj_ptr = this;
+        context->id = i;
+        if (pthread_create(&src_thread, NULL, pthread_fun_wrapper<SrcSinkComm, &SrcSinkComm::loopFromSrc>, context) != 0) {
+            perror("socket src communication thread create failed");
+            exit(0);
+        }
+    }
 
+    for (int i = 0; i < comm_thread_num_; i++) {
+        pthread_t sink_thread;
+        auto context = new EventHandlerContext<SrcSinkComm>;
+        context->obj_ptr = this;
+        context->id = i;
+        if (pthread_create(&sink_thread, NULL, pthread_fun_wrapper<SrcSinkComm, &SrcSinkComm::loopToSink>, context) != 0) {
+            perror("socket sink communication thread create failed");
+            exit(0);
+        }
+    }
+    sleep(1);
+    pthread_cond_broadcast(&cond);
+    return true;
+}
+
+
+int SrcSinkComm::loopFromSrc(int tid)
+{
+    /*
+     * Downlink (Receive from MAC -source- and send to lower PHY)
+     */
+    pin_to_core_with_offset(ThreadType::kWorkerSrc, core_id_, tid);
+    moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
+
+    char* rx_buffer = (*buffer_)[tid];
+    int* rx_buffer_status = (*buffer_status_)[tid];
+    int rx_buffer_frame_num = buffer_frame_num_;
+
+    socklen_t addrlen = sizeof(remote_addr_[tid]);
+    int rx_offset = 0;
+
+    while (config_->running) {
         /* 
          READ from source packet queue
          (1) Continuously check socket buffer for any packets
          (2) Upon reception, start processing and enqueue to message_queue
           - Note: Reshape frame (let's "broadcast", replicate depending on number of UEs)
          */
+
+        // if rx_buffer is full, exit
+        if (rx_buffer_status[rx_offset] == 1) {
+            printf("Upper PHY RX thread %d buffer full, offset: %d\n", tid, rx_offset);
+            exit(0);
+        }
         int recvlen = -1;
-        if ((recvlen = recvfrom(socket_[tid], socket_up_buffer_,
-                 sock_buf_size_, 0, (struct sockaddr*)&remote_addr_[tid],
+        if ((recvlen = recvfrom(socket_[tid], (char*)&rx_buffer[rx_offset * max_frame_size_],
+                 max_frame_size_, 0, (struct sockaddr*)&remote_addr_[tid],
                  &addrlen))
             < 0) {
             perror("recv failed");
@@ -115,54 +142,62 @@ void* SrcSinkComm::loopTXRX(int tid)
         }
         printf("XXX RX FROM MAC - Size (bytes): %d\n", recvlen);
 
-        // dl_IQ_data.malloc(dl_data_symbol_num_perframe, OFDM_DATA_NUM * UE_ANT_NUM, 64);
-        // Dimension 1: dl_data_symbol_num_perframe
-        // Dimension 2: OFDM_DATA_NUM * UE_ANT_NUM
-        // [UE0_OFDM0, UE1_OFDM0, UE0_OFDM1 UE1_OFDM1]
-        for (size_t i = 0; i < config_->dl_data_symbol_num_perframe; i++) {   // One symbol is a full packet...?
-            std::vector<int8_t> in_modul;
-            for (size_t ue_id = 0; ue_id < config_->UE_ANT_NUM; ue_id++) {
-                for (size_t j = 0; j < recvlen - 1; j++) {   // config_->OFDM_DATA_NUM; j++) {
-                    int cur_offset = j * UE_ANT_NUM + ue_id;
-                    config_->dl_IQ_data[i][cur_offset] = (int8_t) socket_up_buffer_[j];
-                    if (ue_id == 0)
-                        in_modul.push_back(dl_IQ_data[i][cur_offset]);
-                }
-            }
-        }
-
-	// Push packet-received-from-source event into the queue 
-        Event_data packet_message(
-            EventType::kFromSrc, rx_tag_t(tid, offset)._tag);
-
-        if (!message_queue_->enqueue(*local_ptok, packet_message)) {
+	rx_buffer_status[rx_offset] = 1;
+    	Event_data dl_message(EventType::kFromSrc, rx_offset);
+        moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
+        if (!message_queue_->enqueue(*local_ptok, dl_message)) {
             printf("socket message enqueue failed\n");
             exit(0);
-	}
+        }
+	
+	rx_offset++;
+        if (rx_offset == rx_buffer_frame_num)
+            rx_offset = 0;
 
-	/*
+    }
+    return 0;
+}
+
+
+int SrcSinkComm::loopToSink(int tid)
+{
+    /*
+     * Uplink (Receive from lower PHY, send up to MAC)
+     */
+    pin_to_core_with_offset(ThreadType::kWorkerSink, tx_core_id_, tid);	
+    Event_data task_event;
+    if (!task_queue_->try_dequeue_from_producer(*tx_ptoks_[tid], task_event))
+        return -1;
+    if (task_event.event_type != EventType::kToSink) {
+        printf("Wrong event type!");
+        exit(0
+    }
+    
+    socklen_t addrlen = sizeof(remote_addr_[tid]);
+    int tx_offset = 0;
+
+    while (config_->running) {
         // WRITE to sink packet queue
         // (1) Get packet from decoder
-        // (2) Write to buffer used for transmission TODO
+        // (2) Write to buffer used for transmission
         // decoded_buffer_.calloc(TASK_BUFFER_SUBFRAME_NUM, num_decoded_bytes * cfg->UE_NUM, 64);
         if (packet available in decoded_buffer_) {   // FIXME
-            cur_buffer_ptr_up = (uint8_t*)decoded_buffer_[symbol_offset];
-            if (sendto(socket_[tid], (char*)cur_buffer_ptr_up, packet_length, 0,
+            cur_buffer_ptr_up = (uint8_t*)decoded_buffer_[symbol_offset];  // FIXME
+
+            if (sendto(socket_[tid], (char*)cur_buffer_ptr_up, max_frame_size_, 0,
                     (struct sockaddr*)&servaddr_[tid], sizeof(servaddr_[tid]))
                 < 0) {
                 perror("socket sendto failed");
                 exit(0);
             }
 
-            // Push packet-sent-to-sink-event into the queue
-            Event_data packet_message(
-                EventType::kToSink, rx_tag_t(tid, offset)._tag);
-
-            if (!message_queue_->enqueue(*local_ptok, packet_message)) {
+            Event_data tx_message(EventType::kToSink, tx_offset);
+            moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
+            if (!message_queue_->enqueue(*local_ptok, tx_message)) {
                 printf("socket message enqueue failed\n");
                 exit(0);
             }
-        }*/ 
+        }
     }
     return 0;
 }

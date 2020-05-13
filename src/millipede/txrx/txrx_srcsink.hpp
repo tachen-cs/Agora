@@ -72,7 +72,8 @@ public:
     /**
      * receive thread
      */
-    void* loopTXRX(int tid);
+    int loopFromSrc(int tid);
+    int loopToSink(int tid);
 
 #if USE_IPV4
     typedef struct sockaddr_in sockaddr_t;
@@ -91,6 +92,7 @@ private:
     int* socket_;
     char* socket_up_buffer_;
     int sock_buf_size_;
+    int max_frame_size_;
 
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t cond = PTHREAD_COND_INITIALIZER;

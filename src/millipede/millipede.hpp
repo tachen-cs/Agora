@@ -210,6 +210,10 @@ private:
     Data_stats ifft_stats_;
     Data_stats tx_stats_;
 
+    // XXX OBCH XXX
+    Data_stats send_to_sink_stats_;
+    Data_stats recv_from_src_stats_;
+
     // Per-frame queues of delayed FFT tasks. The queue contains offsets into
     // TX/RX buffers.
     std::array<std::queue<fft_req_tag_t>, TASK_BUFFER_FRAME_NUM> fft_queue_arr;
@@ -288,6 +292,9 @@ private:
 #ifdef USE_LDPC
     moodycamel::ConcurrentQueue<Event_data> decode_queue_;
 #endif
+    // XXX OBCH XXX  
+    moodycamel::ConcurrentQueue<Event_data> send_to_sink_queue_;
+    
     /* main thread message queue for data receiving */
     moodycamel::ConcurrentQueue<Event_data> message_queue_;
     /* main thread message queue for task completion*/
@@ -300,6 +307,10 @@ private:
 #ifdef USE_LDPC
     moodycamel::ConcurrentQueue<Event_data> encode_queue_;
 #endif
+
+    // XXX OBCH XXX
+    moodycamel::ConcurrentQueue<Event_data> recv_from_src_queue_;
+
     moodycamel::ConcurrentQueue<Event_data> precode_queue_;
     moodycamel::ConcurrentQueue<Event_data> tx_queue_;
 

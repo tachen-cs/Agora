@@ -40,7 +40,7 @@ Millipede::Millipede(Config* cfg)
         new PacketTXRX(config_, cfg->socket_thread_num, cfg->core_offset + 1,
             &message_queue_, &tx_queue_, rx_ptoks_ptr, tx_ptoks_ptr));
 
-    // XXX OBCH FIXME XXX how to update offset? tx_queue?
+    // XXX OBCH FIXME XXX how to update offset?
     /* Initialize SRC SINK Comm. threads*/
     src_snk_ptr_.reset(
         new SrcSinkComm(config_, cfg->socket_thread_num, cfg->core_offset + 1,
@@ -121,7 +121,18 @@ void Millipede::start()
         decode_stats_.max_task_count, EventType::kDecode);
 #endif
 
+    // XXX OBCH XXX
+    moodycamel::ProducerToken ptok_send_to_sink(send_to_sink_queue_);
+    Consumer consumer_send_to_sink(send_to_sink_queue_, ptok_send_to_sink,
+        send_to_sink_stats_.max_task_count, EventType::kToSink);
+
+
     /* Downlink */
+    // XXX OBCH XXX
+    moodycamel::ProducerToken ptok_recv_from_src(recv_from_src_queue_);
+    Consumer consumer_recv_from_src(recv_from_src_queue_, ptok_recv_from_src,
+        recv_from_src_stats_.max_task_count, EventType::kFromSrc);
+
 #ifdef USE_LDPC
     moodycamel::ProducerToken ptok_encode(encode_queue_);
     Consumer consumer_encode(encode_queue_, ptok_encode,
@@ -335,6 +346,11 @@ void Millipede::start()
                     = total_data_subframe_id % cfg->ul_data_symbol_num_perframe;
 
                 if (decode_stats_.last_task(frame_id, data_subframe_id)) {
+
+		    // XXX OBCH XXX - schedule next task? send to MAC after decoding
+		    consumer_send_to_sink.schedule_task_set(total_data_subframe_id);
+                    // XXX OBCH END XXX
+		   
                     print_per_subframe_done(PRINT_DECODE,
                         decode_stats_.frame_count, frame_id, data_subframe_id);
                     if (decode_stats_.last_symbol(frame_id)) {
@@ -514,18 +530,51 @@ void Millipede::start()
 
                 char* socket_buffer_ptr = socket_buffer_[socket_thread_id]
                     + (long long)offset_in_current_buffer * cfg->packet_length;
+                struct Packet* pkt = (struct Packet*)socket_buffer_ptr;
 
+                frame_count = pkt->frame_id % 10000;
+                size_t frame_id = frame_count % TASK_BUFFER_FRAME_NUM;
+                int subframe_id = pkt->symbol_id;
 
-
+                update_rx_counters(frame_count, frame_id, subframe_id);
 
             } break;
 
             case EventType::kToSink: {
                 /* Data sent to upper layers */
-	            // Collect stats 
+                int offset = event.data;
+                int ant_id = offset % cfg->BS_ANT_NUM;
+                int total_data_subframe_id = offset / cfg->BS_ANT_NUM;
+                int frame_id
+                    = total_data_subframe_id / cfg->data_symbol_num_perframe;
+                int data_subframe_id
+                    = total_data_subframe_id % cfg->data_symbol_num_perframe;
+                frame_id = frame_id % TASK_BUFFER_FRAME_NUM;
 
-
-
+                if (tx_stats_.last_task(frame_id, data_subframe_id)) {
+                    print_per_subframe_done(PRINT_TX, tx_stats_.frame_count,
+                        frame_id, data_subframe_id);
+                    /* If tx of the first symbol is done */
+                    if (data_subframe_id == (int)cfg->dl_data_symbol_start) {
+                        stats_manager_->update_tx_processed_first(
+                            tx_stats_.frame_count);
+                        print_per_frame_done(
+                            PRINT_TX_FIRST, tx_stats_.frame_count, frame_id);
+                    }
+                    if (tx_stats_.last_symbol(frame_id)) {
+                        stats_manager_->update_tx_processed(
+                            tx_stats_.frame_count);
+                        print_per_frame_done(
+                            PRINT_TX, tx_stats_.frame_count, frame_id);
+                        stats_manager_->update_stats_in_functions_downlink(
+                            tx_stats_.frame_count);
+                        if (stats_manager_->last_frame_id
+                            == config_->tx_frame_num - 1)
+                            goto finish;
+                        tx_stats_.update_frame_count();
+                    }
+                    tx_count++;
+                }
             } break;
 // XXX OBCH END XXX
 
@@ -1102,6 +1151,11 @@ void Millipede::initialize_queues()
     decode_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
 #endif
 
+    // XXX OBCH XXX
+    send_to_sink_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
+    recv_from_src_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
+    // XXX OBCH END XXX
+
     ifft_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
 #ifdef USE_LDPC
     encode_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
@@ -1118,6 +1172,18 @@ void Millipede::initialize_queues()
         64, config_->socket_thread_num * sizeof(moodycamel::ProducerToken*));
     for (size_t i = 0; i < config_->socket_thread_num; i++)
         tx_ptoks_ptr[i] = new moodycamel::ProducerToken(tx_queue_);
+
+    // XXX OBCH XXX
+    src_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
+        64, config_->socket_thread_num * sizeof(moodycamel::ProducerToken*));
+    for (size_t i = 0; i < config_->socket_thread_num; i++)
+        src_ptoks_ptr[i] = new moodycamel::ProducerToken(recv_from_src_queue_);
+
+    sink_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
+        64, config_->socket_thread_num * sizeof(moodycamel::ProducerToken*));
+    for (size_t i = 0; i < config_->socket_thread_num; i++)
+        sink_ptoks_ptr[i] = new moodycamel::ProducerToken(send_to_sink_queue_);
+    // XXX OBCH END XXX
 
     worker_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
         64, config_->worker_thread_num * sizeof(moodycamel::ProducerToken*));
@@ -1143,17 +1209,12 @@ void Millipede::initialize_uplink_buffers()
            "socket buffer status size %d\n",
         socket_buffer_size_, socket_buffer_status_size_);
 
-    
-    (hi_socket_buffer_, hi_socket_buffer_status_,
-            hi_socket_buffer_status_size_, hi_socket_buffer_size_,
-            hi_dl_socket_buffer_, hi_dl_socket_buffer_status_, 
-	    hi_dl_socket_buffer_status_size_, hi_dl_socket_buffer_size_)
-
-    // XXX OBCH - might want to have a different number of socket threads for this
+    // XXX OBCH XXX - might want to have a different number of socket threads for this
     hi_socket_buffer_.malloc(
         cfg->socket_thread_num, hi_socket_buffer_size_, 64);
     hi_socket_buffer_status_.calloc(
         cfg->socket_thread_num, hi_socket_buffer_status_size_, 64);
+    // XXX OBCH END XXX
 
     socket_buffer_.malloc(
         cfg->socket_thread_num /* RX */, socket_buffer_size_, 64);
@@ -1218,6 +1279,13 @@ void Millipede::initialize_downlink_buffers()
     int TASK_BUFFER_SUBFRAME_NUM
         = cfg->data_symbol_num_perframe * TASK_BUFFER_FRAME_NUM;
 
+    // XXX OBCH XXX - might want to have a different number of socket threads for this
+    hi_dl_socket_buffer_.malloc(
+        cfg->socket_thread_num, hi_dl_socket_buffer_size_, 64);
+    hi_dl_socket_buffer_status_.calloc(
+        cfg->socket_thread_num, hi_dl_socket_buffer_status_size_, 64);
+    // XXX OBCH END XXX
+
     dl_socket_buffer_status_size_ = cfg->BS_ANT_NUM * SOCKET_BUFFER_FRAME_NUM
         * cfg->data_symbol_num_perframe;
     dl_socket_buffer_size_
@@ -1264,6 +1332,11 @@ void Millipede::free_uplink_buffers()
     demod_soft_buffer_.free();
     decoded_buffer_.free();
 
+    // XXX OBCH XXX
+    hi_socket_buffer_.free();
+    hi_socket_buffer_status_.free();
+    // XXX OBCH END XXX
+
     free_buffer_1d(&(rx_stats_.task_count));
     free_buffer_1d(&(rx_stats_.task_pilot_count));
     fft_stats_.fini();
@@ -1280,6 +1353,10 @@ void Millipede::free_downlink_buffers()
 {
     free_buffer_1d(&dl_socket_buffer_);
     free_buffer_1d(&dl_socket_buffer_status_);
+    // XXX OBCH XXX
+    free_buffer_1d(&hi_dl_socket_buffer_);
+    free_buffer_1d(&hi_dl_socket_buffer_status_);
+    // XXX OBCH END XXX
 
     dl_ifft_buffer_.free();
 
