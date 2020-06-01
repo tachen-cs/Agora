@@ -2,8 +2,8 @@
  *
  */
 
-#ifndef SRCSINKCOMM
-#define SRCSINKCOMM
+#ifndef MACCOMM
+#define MACCOMM
 
 #include "Symbols.hpp"
 #include "buffer.hpp"
@@ -33,7 +33,7 @@
 #include "config.hpp"
 
 typedef unsigned short ushort;
-class SrcSinkComm {
+class MacComm {
 public:
     //     // use for create pthread
     //     struct PacketTXRXContext
@@ -43,17 +43,17 @@ public:
     //     };
 
 public:
-    SrcSinkComm(Config* cfg, int COMM_THREAD_NUM = 1, int in_core_offset = 1);
+    MacComm(Config* cfg, int COMM_THREAD_NUM = 1, int in_core_offset = 1);
     /**
      * COMM_THREAD_NUM: socket thread number
      * in_queue: message queue to communicate with main thread
      */
-    SrcSinkComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset,
+    MacComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset,
         moodycamel::ConcurrentQueue<Event_data>* in_queue_message,
         moodycamel::ConcurrentQueue<Event_data>* in_queue_task,
         moodycamel::ProducerToken** in_rx_ptoks,
         moodycamel::ProducerToken** in_tx_ptoks);
-    ~SrcSinkComm();
+    ~MacComm();
 
     /**
      * called in main threads to start the socket threads
@@ -72,8 +72,8 @@ public:
     /**
      * receive thread
      */
-    int loopFromSrc(int tid);
-    int loopToSink(int tid);
+    int loopFromMac(int tid);
+    int loopToMac(int tid);
 
 #if USE_IPV4
     typedef struct sockaddr_in sockaddr_t;

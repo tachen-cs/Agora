@@ -2,10 +2,10 @@
  *
  */
 
-#include "txrx_srcsink.hpp"
+#include "txrx_mac.hpp"
 
 
-SrcSinkComm::SrcSinkComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset)
+MacComm::MacComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset)
 {
     config_ = cfg;
     comm_thread_num_ = COMM_THREAD_NUM;
@@ -29,12 +29,12 @@ SrcSinkComm::SrcSinkComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset)
 }
 
 
-SrcSinkComm::SrcSinkComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset,
+MacComm::MacComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset,
     moodycamel::ConcurrentQueue<Event_data>* in_queue_message,
     moodycamel::ConcurrentQueue<Event_data>* in_queue_task,
     moodycamel::ProducerToken** in_rx_ptoks,
     moodycamel::ProducerToken** in_tx_ptoks)
-    : SrcSinkComm(cfg, COMM_THREAD_NUM, in_core_offset)
+    : MacComm(cfg, COMM_THREAD_NUM, in_core_offset)
 {
     message_queue_ = in_queue_message;
     task_queue_ = in_queue_task;
@@ -43,14 +43,14 @@ SrcSinkComm::SrcSinkComm(Config* cfg, int COMM_THREAD_NUM, int in_core_offset,
 }
 
 
-SrcSinkComm::~SrcSinkComm()
+MacComm::~MacComm()
 {
     delete[] socket_;
     delete[] remote_addr_;
 }
 
 
-bool SrcSinkComm::startComm(Table<char>& in_buffer, Table<int>& in_buffer_status,
+bool MacComm::startComm(Table<char>& in_buffer, Table<int>& in_buffer_status,
     int in_buffer_frame_num, long long in_buffer_length,
     char* in_tx_buffer, int* in_tx_buffer_status,
     int in_tx_buffer_frame_num, int in_tx_buffer_length)
@@ -79,10 +79,10 @@ bool SrcSinkComm::startComm(Table<char>& in_buffer, Table<int>& in_buffer_status
    printf("create upper layer comm. threads (source/sink) \n");
     for (int i = 0; i < comm_thread_num_; i++) {
         pthread_t src_thread;
-        auto context = new EventHandlerContext<SrcSinkComm>;
+        auto context = new EventHandlerContext<MacComm>;
         context->obj_ptr = this;
         context->id = i;
-        if (pthread_create(&src_thread, NULL, pthread_fun_wrapper<SrcSinkComm, &SrcSinkComm::loopFromSrc>, context) != 0) {
+        if (pthread_create(&src_thread, NULL, pthread_fun_wrapper<MacComm, &MacComm::loopFromMac>, context) != 0) {
             perror("socket src communication thread create failed");
             exit(0);
         }
@@ -90,10 +90,10 @@ bool SrcSinkComm::startComm(Table<char>& in_buffer, Table<int>& in_buffer_status
 
     for (int i = 0; i < comm_thread_num_; i++) {
         pthread_t sink_thread;
-        auto context = new EventHandlerContext<SrcSinkComm>;
+        auto context = new EventHandlerContext<MacComm>;
         context->obj_ptr = this;
         context->id = i;
-        if (pthread_create(&sink_thread, NULL, pthread_fun_wrapper<SrcSinkComm, &SrcSinkComm::loopToSink>, context) != 0) {
+        if (pthread_create(&sink_thread, NULL, pthread_fun_wrapper<MacComm, &MacComm::loopToMac>, context) != 0) {
             perror("socket sink communication thread create failed");
             exit(0);
         }
@@ -104,12 +104,12 @@ bool SrcSinkComm::startComm(Table<char>& in_buffer, Table<int>& in_buffer_status
 }
 
 
-int SrcSinkComm::loopFromSrc(int tid)
+int MacComm::loopFromMac(int tid)
 {
     /*
      * Downlink (Receive from MAC -source- and send to lower PHY)
      */
-    pin_to_core_with_offset(ThreadType::kWorkerSrc, core_id_, tid);
+    pin_to_core_with_offset(ThreadType::kWorkerFromMac, core_id_, tid);
     moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
 
     char* rx_buffer = (*buffer_)[tid];
@@ -143,7 +143,7 @@ int SrcSinkComm::loopFromSrc(int tid)
         printf("XXX RX FROM MAC - Size (bytes): %d\n", recvlen);
 
 	rx_buffer_status[rx_offset] = 1;
-    	Event_data dl_message(EventType::kFromSrc, rx_offset);
+    	Event_data dl_message(EventType::kFromMac, rx_offset);
         moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
         if (!message_queue_->enqueue(*local_ptok, dl_message)) {
             printf("socket message enqueue failed\n");
@@ -159,16 +159,16 @@ int SrcSinkComm::loopFromSrc(int tid)
 }
 
 
-int SrcSinkComm::loopToSink(int tid)
+int MacComm::loopToMac(int tid)
 {
     /*
      * Uplink (Receive from lower PHY, send up to MAC)
      */
-    pin_to_core_with_offset(ThreadType::kWorkerSink, tx_core_id_, tid);	
+    pin_to_core_with_offset(ThreadType::kWorkerToMac, tx_core_id_, tid);	
     Event_data task_event;
     if (!task_queue_->try_dequeue_from_producer(*tx_ptoks_[tid], task_event))
         return -1;
-    if (task_event.event_type != EventType::kToSink) {
+    if (task_event.event_type != EventType::kToMac) {
         printf("Wrong event type!");
         exit(0
     }
@@ -191,7 +191,7 @@ int SrcSinkComm::loopToSink(int tid)
                 exit(0);
             }
 
-            Event_data tx_message(EventType::kToSink, tx_offset);
+            Event_data tx_message(EventType::kToMac, tx_offset);
             moodycamel::ProducerToken* local_ptok = rx_ptoks_[tid];
             if (!message_queue_->enqueue(*local_ptok, tx_message)) {
                 printf("socket message enqueue failed\n");

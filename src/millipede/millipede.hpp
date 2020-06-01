@@ -114,7 +114,7 @@ private:
     int max_equaled_frame = 0;
     // int max_packet_num_per_frame;
     std::unique_ptr<PacketTXRX> receiver_;
-    std::unique_ptr<SrcSinkComm> src_snk_ptr_;  // OBCH XXX
+    std::unique_ptr<SrcSinkComm> mac_ptr_;  // OBCH XXX
     Stats* stats_manager_;
     // std::unique_ptr<Stats> stats_manager_;
     // pthread_t task_threads[TASK_THREAD_NUM];
@@ -138,7 +138,8 @@ private:
     long long socket_buffer_size_;
     int socket_buffer_status_size_;
 
-    /* To Sink (from millipede to upper layer) */
+    // XXX OBCH XXX
+    /* To MAC (from millipede to upper layer) */
     /**
      * send data to upper layres
      * Frist dimension: SOCKET_THREAD_NUM
@@ -211,8 +212,8 @@ private:
     Data_stats tx_stats_;
 
     // XXX OBCH XXX
-    Data_stats send_to_sink_stats_;
-    Data_stats recv_from_src_stats_;
+    Data_stats send_to_mac_stats_;
+    Data_stats recv_from_mac_stats_;
 
     // Per-frame queues of delayed FFT tasks. The queue contains offsets into
     // TX/RX buffers.
@@ -267,6 +268,7 @@ private:
     long long dl_socket_buffer_size_;
     int dl_socket_buffer_status_size_;
 
+    // XXX OBCH XXX
     /**
      * From Source (downlink - from upper layer)
      * Get data from source and process it
@@ -293,7 +295,7 @@ private:
     moodycamel::ConcurrentQueue<Event_data> decode_queue_;
 #endif
     // XXX OBCH XXX  
-    moodycamel::ConcurrentQueue<Event_data> send_to_sink_queue_;
+    moodycamel::ConcurrentQueue<Event_data> send_to_mac_queue_;
     
     /* main thread message queue for data receiving */
     moodycamel::ConcurrentQueue<Event_data> message_queue_;
@@ -309,7 +311,8 @@ private:
 #endif
 
     // XXX OBCH XXX
-    moodycamel::ConcurrentQueue<Event_data> recv_from_src_queue_;
+    moodycamel::ConcurrentQueue<Event_data> recv_from_mac_queue_;
+    moodycamel::ConcurrentQueue<Event_data> from_mac_task_queue_;
 
     moodycamel::ConcurrentQueue<Event_data> precode_queue_;
     moodycamel::ConcurrentQueue<Event_data> tx_queue_;
@@ -318,6 +321,10 @@ private:
     moodycamel::ProducerToken** rx_ptoks_ptr;
     moodycamel::ProducerToken** tx_ptoks_ptr;
     moodycamel::ProducerToken** worker_ptoks_ptr;
+
+    // XXX OBCH XXX
+    moodycamel::ProducerToken** from_mac_ptoks_ptr;
+    moodycamel::ProducerToken** to_mac_ptoks_ptr;
 };
 
 #endif

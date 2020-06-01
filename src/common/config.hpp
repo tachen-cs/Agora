@@ -142,10 +142,10 @@ public:
 
     // XXX OBCH XXX 
     /* Enable Upper Layers */
-    bool network_src_sink;
-    std::string src_sink_addr;  // millipede will act as server
+    bool network_mac;
+    std::string mac_addr;  // millipede will act as server
     int millipede_up_port;
-    int src_sink_port;
+    int mac_port;
     // XXX OBCH END XXX
 
     bool isUE;

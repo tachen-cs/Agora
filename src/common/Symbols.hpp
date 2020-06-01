@@ -56,8 +56,8 @@ enum class EventType : int {
     kRC,
     kRXSymbol,
     kInvalid,
-    kFromSrc,   // XXX OBCH
-    kToSink     // XXX OBCH
+    kFromMac,   // XXX OBCH
+    kToMac     // XXX OBCH
 };
 
 #define PRINT_RX_PILOTS 0
@@ -137,8 +137,8 @@ enum class ThreadType {
     kWorkerTXRX,
     kMasterRX,
     kMasterTX,
-    kWorkerSrc,   // XXX OBCH
-    kWorkerSink,  // XXX OBCH
+    kWorkerFromMac,   // XXX OBCH
+    kWorkerToMac,     // XXX OBCH
 };
 
 static inline std::string thread_type_str(ThreadType thread_type)
@@ -164,10 +164,10 @@ static inline std::string thread_type_str(ThreadType thread_type)
         return "Master (RX)";
     case ThreadType::kMasterTX:
         return "Master (TX)";
-    case ThreadType::kWorkerSrc:    // XXX OBCH
-        return "Worker (Src)";
-     case ThreadType::kWorkerSink:  // XXX OBCH
-        return "Worker (Sink)";
+    case ThreadType::kWorkerFromMac:    // XXX OBCH
+        return "Worker (From MAC)";
+     case ThreadType::kWorkerToMac:  // XXX OBCH
+        return "Worker (To MAC)";
    }
    return "Invalid thread type";
 }

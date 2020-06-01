@@ -22,5 +22,9 @@
  "worker_thread_num" : 25,
  "demul_block_size" : 48,
  "bs_ant_num": 8,
- "network_src_sink": false
+ "network_mac": false,
+ "mac_addr": "10.0.0.127",
+ "millipede_up_port": 6000,
+ "mac_port": 6000
 }
+

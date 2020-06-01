@@ -40,11 +40,12 @@ Millipede::Millipede(Config* cfg)
         new PacketTXRX(config_, cfg->socket_thread_num, cfg->core_offset + 1,
             &message_queue_, &tx_queue_, rx_ptoks_ptr, tx_ptoks_ptr));
 
-    // XXX OBCH FIXME XXX how to update offset?
+    // XXX OBCH XXX
     /* Initialize SRC SINK Comm. threads*/
-    src_snk_ptr_.reset(
-        new SrcSinkComm(config_, cfg->socket_thread_num, cfg->core_offset + 1,
-            &message_queue_, &tx_queue_, rx_ptoks_ptr, tx_ptoks_ptr));
+    int core_offset_tmp = cfg->core_offset + rx_thread_num + tx_thread_num + worker_thread_num + 1;
+    mac_ptr_.reset(
+        new MacComm(config_, cfg->socket_thread_num, core_offset_tmp,
+            &recv_from_mac_queue_, &from_mac_task_queue_, from_mac_ptoks_ptr, to_mac_ptoks_ptr));
 
     /* Create worker threads */
     if (config_->bigstation_mode) {
@@ -122,16 +123,16 @@ void Millipede::start()
 #endif
 
     // XXX OBCH XXX
-    moodycamel::ProducerToken ptok_send_to_sink(send_to_sink_queue_);
-    Consumer consumer_send_to_sink(send_to_sink_queue_, ptok_send_to_sink,
-        send_to_sink_stats_.max_task_count, EventType::kToSink);
+    moodycamel::ProducerToken ptok_send_to_mac(send_to_mac_queue_);
+    Consumer consumer_send_to_mac(send_to_mac_queue_, ptok_send_to_mac,
+        send_to_mac_stats_.max_task_count, EventType::kToMAC);
 
 
     /* Downlink */
     // XXX OBCH XXX
-    moodycamel::ProducerToken ptok_recv_from_src(recv_from_src_queue_);
-    Consumer consumer_recv_from_src(recv_from_src_queue_, ptok_recv_from_src,
-        recv_from_src_stats_.max_task_count, EventType::kFromSrc);
+    moodycamel::ProducerToken ptok_recv_from_mac(recv_from_mac_queue_);
+    Consumer consumer_recv_from_mac(recv_from_mac_queue_, ptok_recv_from_mac,
+        recv_from_mac_stats_.max_task_count, EventType::kFromMAC);
 
 #ifdef USE_LDPC
     moodycamel::ProducerToken ptok_encode(encode_queue_);
@@ -348,7 +349,7 @@ void Millipede::start()
                 if (decode_stats_.last_task(frame_id, data_subframe_id)) {
 
 		    // XXX OBCH XXX - schedule next task? send to MAC after decoding
-		    consumer_send_to_sink.schedule_task_set(total_data_subframe_id);
+		    consumer_send_to_mac.schedule_task_set(total_data_subframe_id);
                     // XXX OBCH END XXX
 		   
                     print_per_subframe_done(PRINT_DECODE,
@@ -523,8 +524,8 @@ void Millipede::start()
                 }
             } break;
 
-// XXX OBCH XXX
-            case EventType::kFromSrc: {
+// XXX OBCH XXX TODO !!!
+	    case EventType::kFromMac: {
                 int offset_in_current_buffer = rx_tag_t(event.data).offset;
                 int socket_thread_id = rx_tag_t(event.data).tid;
 
@@ -540,7 +541,7 @@ void Millipede::start()
 
             } break;
 
-            case EventType::kToSink: {
+            case EventType::kToMac: {
                 /* Data sent to upper layers */
                 int offset = event.data;
                 int ant_id = offset % cfg->BS_ANT_NUM;
@@ -1152,8 +1153,8 @@ void Millipede::initialize_queues()
 #endif
 
     // XXX OBCH XXX
-    send_to_sink_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
-    recv_from_src_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
+    send_to_mac_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
+    recv_from_mac_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
     // XXX OBCH END XXX
 
     ifft_queue_ = mt_queue_t(512 * data_subframe_num_perframe * 4);
@@ -1174,15 +1175,15 @@ void Millipede::initialize_queues()
         tx_ptoks_ptr[i] = new moodycamel::ProducerToken(tx_queue_);
 
     // XXX OBCH XXX
-    src_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
+    from_mac_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
         64, config_->socket_thread_num * sizeof(moodycamel::ProducerToken*));
     for (size_t i = 0; i < config_->socket_thread_num; i++)
-        src_ptoks_ptr[i] = new moodycamel::ProducerToken(recv_from_src_queue_);
+        from_mac_ptoks_ptr[i] = new moodycamel::ProducerToken(recv_from_mac_queue_);
 
-    sink_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
+    to_mac_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
         64, config_->socket_thread_num * sizeof(moodycamel::ProducerToken*));
     for (size_t i = 0; i < config_->socket_thread_num; i++)
-        sink_ptoks_ptr[i] = new moodycamel::ProducerToken(send_to_sink_queue_);
+        to_mac_ptoks_ptr[i] = new moodycamel::ProducerToken(send_to_mac_queue_);
     // XXX OBCH END XXX
 
     worker_ptoks_ptr = (moodycamel::ProducerToken**)aligned_alloc(
