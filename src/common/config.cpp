@@ -241,12 +241,17 @@ Config::Config(std::string jsonfile)
         = OFDM_DATA_NUM * mod_type / 8; // number of Bytes in each OFDM Sym.
     data_bytes_num_perframe = data_bytes_num_persymbol
         * (ul_data_symbol_num_perframe - UL_PILOT_SYMS);
-    mac_data_bytes_num_perframe = data_bytes_num_perframe;
-    mac_packet_length = Packet::kOffsetOfData + mac_data_bytes_num_perframe;
+
+    // we currently assume mac take one full frame worht of data
+    mac_fragments = (ul_data_symbol_num_perframe - UL_PILOT_SYMS);
+    mac_payload_length = data_bytes_num_perframe - mac_fragments * MacPacket::kOffsetOfData;
+    mac_packet_length = data_bytes_num_perframe;
+    mac_fragment_payload_length = data_bytes_num_persymbol - MacPacket::kOffsetOfData;
+    mac_fragment_length = data_bytes_num_persymbol;
     // The current implementation only supports the case when  MAC packet size
     // is multiples of data_bytes_num_perframe
     if (data_bytes_num_perframe != 0)
-        rt_assert(mac_data_bytes_num_perframe % data_bytes_num_perframe == 0,
+        rt_assert(mac_packet_length % data_bytes_num_perframe == 0,
             "MAC packet size need to be multiples of data_bytes_num_perframe!");
 
     running = true;

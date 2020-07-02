@@ -82,8 +82,8 @@ void* SimpleBSMac::loopRecv(int tid)
 
         if (kDebugBSReceiver) {
             // Read information from received packet
-            printf("RX thread %d received frame %d symbol %d, ant %d\n ", tid,
-                pkt->frame_id, pkt->symbol_id, pkt->ue_id);
+            printf("RX thread %d received Frame sequence %d, fragment %d, stream %d\n ", tid,
+                pkt->sequence_id, pkt->fragment_id, pkt->stream_id);
         }
     }
     return NULL;

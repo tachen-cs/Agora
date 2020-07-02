@@ -142,10 +142,10 @@ struct MacPacket* MacPacketTXRX::recv_enqueue(int tid, int radio_id)
     // printf("port is: %d\n", (int)ntohs(servaddr_[radio_id].sin_port));
 
     size_t total_symbol_idx
-        = cfg->get_total_data_symbol_idx_dl(pkt->frame_id, pkt->symbol_id);
+        = cfg->get_total_data_symbol_idx_dl(pkt->sequence_id, pkt->fragment_id);
     int rx_offset
         = total_symbol_idx * (kUseLDPC ? cfg->LDPC_config.nblocksInSymbol : 1);
-    if ((*dl_bits_buffer_status_)[pkt->ue_id][rx_offset] == 1) {
+    if ((*dl_bits_buffer_status_)[pkt->stream_id][rx_offset] == 1) {
         printf("MAC Receive thread %d dl_bits_buffer full, offset: %d\n", tid,
             rx_offset);
         cfg->running = false;
@@ -153,15 +153,15 @@ struct MacPacket* MacPacketTXRX::recv_enqueue(int tid, int radio_id)
     } else {
         for (int i = 0; i < (kUseLDPC ? cfg->LDPC_config.nblocksInSymbol : 1);
              i++)
-            (*dl_bits_buffer_status_)[pkt->ue_id][rx_offset + i] = 1;
+            (*dl_bits_buffer_status_)[pkt->stream_id][rx_offset + i] = 1;
         memcpy(&(*dl_bits_buffer_)[total_symbol_idx]
-                                  [pkt->ue_id * cfg->OFDM_DATA_NUM],
+                                  [pkt->stream_id * cfg->OFDM_DATA_NUM],
             pkt->data, packet_length);
     }
 
     // Push kPacketRX event into the queue.
     Event_data rx_message(EventType::kPacketFromMac,
-        gen_tag_t::frm_sym_ue(pkt->frame_id, pkt->symbol_id, pkt->ue_id)._tag);
+        gen_tag_t::frm_sym_ue(pkt->sequence_id, pkt->fragment_id, pkt->stream_id)._tag);
     if (!message_queue_->enqueue(*local_ptok, rx_message)) {
         printf("socket message enqueue failed\n");
         exit(0);
@@ -181,23 +181,28 @@ int MacPacketTXRX::dequeue_send(int tid)
     size_t symbol_id = gen_tag_t(event.tags[0]).symbol_id;
     size_t ue_id = gen_tag_t(event.tags[0]).ue_id;
 
-    int packet_length = kUseLDPC
-        ? (bits_to_bytes(cfg->LDPC_config.cbLen)
-              * cfg->LDPC_config.nblocksInSymbol)
-        : bits_to_bytes(cfg->OFDM_DATA_NUM * cfg->mod_type);
-    packet_length += MacPacket::kOffsetOfData;
+    //int packet_length = kUseLDPC
+    //    ? (bits_to_bytes(cfg->LDPC_config.cbLen)
+    //          * cfg->LDPC_config.nblocksInSymbol)
+    //    : bits_to_bytes(cfg->OFDM_DATA_NUM * cfg->mod_type);
+    //packet_length += MacPacket::kOffsetOfData;
+    int packet_length = cfg->mac_fragment_length;
 
     size_t total_symbol_idx
         = cfg->get_total_data_symbol_idx_ul(frame_id, symbol_id);
     uint8_t* ul_data_ptr
         = &(*ul_bits_buffer_)[total_symbol_idx][ue_id * cfg->OFDM_DATA_NUM];
     auto* pkt = (MacPacket*)tx_buffer_[tid];
-    new (pkt) MacPacket(frame_id, symbol_id, 0 /* cell_id */, ue_id);
-    pkt->frame_id = frame_id;
-    pkt->symbol_id = symbol_id;
-    pkt->ue_id = ue_id;
-    adapt_bits_from_mod((int8_t*)ul_data_ptr, (int8_t*)pkt->data,
+    //new (pkt) MacPacket(frame_id, symbol_id, 0 /* cell_id */, ue_id);
+    //pkt->sequence_id = frame_id;
+    //pkt->fragment_id = symbol_id;
+    //pkt->stream_id = ue_id;
+    adapt_bits_from_mod((int8_t*)ul_data_ptr, (int8_t*)pkt,
         cfg->OFDM_DATA_NUM, cfg->mod_type);
+    if (pkt->stream_id != ue_id / cfg->nChannels)
+        std::cout << "Received UE ID not matching in Frame sequence" << pkt->sequence_id << std::endl;
+    if (pkt->fragment_id != symbol_id)
+        std::cout << "Received Fragment ID not matching Symbol ID in Frame sequence" << pkt->sequence_id << std::endl;
 
     // Send data (one OFDM symbol)
     size_t ret = sendto(socket_[ue_id % cfg->UE_NUM], (char*)pkt, packet_length,

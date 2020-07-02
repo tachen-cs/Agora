@@ -170,10 +170,13 @@ public:
     size_t packet_length;
     size_t data_bytes_num_persymbol;
     size_t data_bytes_num_perframe;
-    size_t mac_data_bytes_num_perframe;
+
+    size_t mac_payload_length;
     size_t mac_packet_length;
-    size_t num_frames_per_mac_packet;
-    size_t sym_packet_length;
+    size_t mac_fragment_payload_length;
+    size_t mac_fragment_length;
+
+    size_t mac_fragments;
 
     // IP address at Millipde side
     std::string rx_addr;

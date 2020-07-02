@@ -222,22 +222,25 @@ void* SimpleClientMac::data_update_thread(int tid)
 
 void SimpleClientMac::update_tx_buffer(gen_tag_t tag)
 {
-    auto* pkt = (MacPacket*)(tx_buffers_[tag_to_tx_buffers_index(tag)]);
-    pkt->frame_id = tag.frame_id;
-    pkt->symbol_id = 0;
-    pkt->cell_id = 0;
-    pkt->ue_id = tag.ue_id;
+    char* packet_buffer = tx_buffers_[tag_to_tx_buffers_index(tag)]; 
 
-    // https://stackoverflow.com/questions/12149593/how-can-i-create-an-array-of-random-numbers-in-c
-    std::random_device r;
-    std::seed_seq seed{ r(), r(), r(), r(), r(), r(), r(), r() };
-    std::mt19937 eng(seed); // a source of random data
+    for (size_t i = 0; i < cfg->mac_fragments; i++) {
+        auto* pkt = (MacPacket*)(packet_buffer + cfg->mac_fragment_length);
+        pkt->sequence_id = tag.frame_id;
+        pkt->stream_id = tag.ue_id;
+        pkt->fragment_id = i;
 
-    std::uniform_int_distribution<char> dist;
-    std::vector<char> v(cfg->mac_data_bytes_num_perframe);
+        // https://stackoverflow.com/questions/12149593/how-can-i-create-an-array-of-random-numbers-in-c
+        std::random_device r;
+        std::seed_seq seed{ r(), r(), r(), r(), r(), r(), r(), r() };
+        std::mt19937 eng(seed); // a source of random data
 
-    generate(begin(v), end(v), bind(dist, eng));
-    memcpy(pkt->data, (char*)v.data(), cfg->mac_data_bytes_num_perframe);
+        std::uniform_int_distribution<char> dist;
+        std::vector<char> v(cfg->mac_fragment_payload_length);
+
+        generate(begin(v), end(v), bind(dist, eng));
+        memcpy(pkt->data, (char*)v.data(), cfg->mac_fragment_payload_length);
+    }
 }
 
 void* SimpleClientMac::worker_thread(int tid)

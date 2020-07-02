@@ -681,49 +681,37 @@ void Phy_UE::doDemul(int tid, size_t tag)
 void Phy_UE::doMapBits(int tid, size_t tag)
 {
     size_t ue_id = rx_tag_t(tag).tid;
-    size_t offset_in_current_buffer = rx_tag_t(tag).offset;
+    size_t offset = rx_tag_t(tag).offset;
 
-    struct MacPacket* pkt = (struct MacPacket*)(ul_bits_buffer_[ue_id]
-        + offset_in_current_buffer * config_->mac_packet_length);
-    size_t mac_frame_id = pkt->frame_id;
-    rt_assert((size_t)pkt->ue_id == ue_id,
+    char* mac_packet = (ul_bits_buffer_[ue_id]
+        + offset * config_->mac_packet_length);
+    struct MacPacket* pkt = (struct MacPacket*)mac_packet;
+    size_t frame_id = pkt->sequence_id;
+    rt_assert((size_t)pkt->stream_id == ue_id,
         "UE index in tag does not match that in received packet!");
 
-    size_t num_frames_per_mac_packet = config_->mac_data_bytes_num_perframe
-        / config_->data_bytes_num_perframe;
-    for (size_t i = 0; i < num_frames_per_mac_packet; i++) {
-        size_t frame_id = mac_frame_id * num_frames_per_mac_packet + i;
-        size_t frame_slot = frame_id % TASK_BUFFER_FRAME_NUM;
-        for (size_t ul_symbol_id = 0; ul_symbol_id < ul_data_symbol_perframe;
-             ul_symbol_id++) {
-            char* raw_bits_ptr = ((char*)pkt->data)
-                + config_->data_bytes_num_persymbol
-                    * (i * ul_data_symbol_perframe + ul_symbol_id);
-            size_t total_ul_symbol_id
-                = frame_slot * ul_data_symbol_perframe + ul_symbol_id;
-            int8_t* bits_for_mod_ptr
-                = (int8_t*)&ul_syms_buffer_[ue_id]
-                                           [total_ul_symbol_id * data_sc_len];
-            adapt_bits_for_mod((int8_t*)raw_bits_ptr, bits_for_mod_ptr,
-                config_->data_bytes_num_persymbol, config_->mod_type);
-
-            // complex_float* modul_buf
-            //     = &modul_buffer_[total_ul_symbol_id][ue_id * data_sc_len];
-            // for (size_t sc = 0; sc < data_sc_len; sc++) {
-            //     modul_buf[sc] = mod_single_uint8(
-            //         (uint8_t)bits_for_mod_ptr[sc], qam_table);
-            // }
-        }
-        // Send a message to the master thread after one frame is done
-        Event_data map_event(EventType::kMapBits,
-            gen_tag_t::frm_sym_ue(frame_id, 0, ue_id)._tag);
-
-        if (!message_queue_.enqueue(*task_ptok[tid], map_event)) {
-            printf("Muliplexing message enqueue failed\n");
-            exit(0);
-        }
+    //size_t frame_id = mac_frame_id * num_frames_per_mac_packet + i;
+    size_t frame_offset = frame_id % TASK_BUFFER_FRAME_NUM;
+    for (size_t frag_id = 0; frag_id < config_->mac_fragments;
+         frag_id++) {
+        char* raw_bits_ptr = mac_packet + frag_id * config_->mac_fragment_length;
+        size_t total_symbol_offset
+            = frame_offset * ul_data_symbol_perframe + frag_id;
+        int8_t* bits_for_mod_ptr
+            = (int8_t*)&ul_syms_buffer_[ue_id]
+                                       [total_symbol_offset * data_sc_len];
+        adapt_bits_for_mod((int8_t*)raw_bits_ptr, bits_for_mod_ptr,
+            config_->data_bytes_num_persymbol, config_->mod_type);
     }
-    ul_bits_buffer_status_[ue_id][offset_in_current_buffer] = 0;
+    // Send a message to the master thread after one frame is done
+    Event_data map_event(EventType::kMapBits,
+        gen_tag_t::frm_sym_ue(frame_id, 0, ue_id)._tag);
+
+    if (!message_queue_.enqueue(*task_ptok[tid], map_event)) {
+        printf("Muliplexing message enqueue failed\n");
+        exit(0);
+    }
+    ul_bits_buffer_status_[ue_id][offset] = 0;
 }
 
 void Phy_UE::doModul(int tid, size_t tag)
