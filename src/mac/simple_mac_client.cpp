@@ -237,7 +237,7 @@ void SimpleClientMac::update_tx_buffer(gen_tag_t tag)
     char* packet_buffer = tx_buffers_[tag_to_tx_buffers_index(tag)]; 
 
     for (size_t i = 0; i < cfg->mac_fragments; i++) {
-        auto* pkt = (MacPacket*)(packet_buffer + cfg->mac_fragment_length);
+        auto* pkt = (MacPacket*)(packet_buffer + i * cfg->mac_fragment_length);
         pkt->sequence_id = tag.frame_id;
         pkt->stream_id = tag.ue_id;
         pkt->fragment_id = i;

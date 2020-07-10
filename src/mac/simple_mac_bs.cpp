@@ -63,12 +63,10 @@ void* SimpleBSMac::loopRecv(int tid)
 
     // loop recv
     socklen_t addrlen = sizeof(remote_addr);
-    int packet_length = cfg->data_bytes_num_persymbol;
-    packet_length += MacPacket::kOffsetOfData;
-    char* rx_buffer = (char*)malloc(packet_length);
+    char* rx_buffer = (char*)malloc(cfg->mac_fragment_length);
     while (true) {
         auto* pkt = (struct MacPacket*)rx_buffer;
-        int ret = recvfrom(socket_local, (char*)pkt, packet_length, 0,
+        int ret = recvfrom(socket_local, (char*)pkt, cfg->mac_fragment_length, 0,
             (struct sockaddr*)&remote_addr, &addrlen);
         if (ret == -1) {
             if (errno != EAGAIN) {
@@ -83,8 +81,8 @@ void* SimpleBSMac::loopRecv(int tid)
             printf(
                 "RX thread %d received sequence %d symbol %d, ue %d, size %zu\n ",
                 tid, pkt->sequence_id, pkt->fragment_id, pkt->stream_id,
-                packet_length - MacPacket::kOffsetOfData);
-            for (size_t i = 0; i < packet_length - MacPacket::kOffsetOfData;
+                cfg->mac_fragment_payload_length);
+            for (size_t i = 0; i < cfg->mac_fragment_payload_length;
                  i++) {
                 printf("%i ", *((uint8_t*)pkt->data + i));
             }
