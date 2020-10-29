@@ -91,11 +91,12 @@ void Channel::awgn(const cx_fmat& fmat_src, cx_fmat& fmat_dst)
 void Channel::rayleigh(const cx_fmat& fmat_src, cx_fmat& fmat_dst)
 {
     /*
-     * Uncorrelated Rayleigh Channel
+     * Simple Uncorrelated Rayleigh Channel
+     * - Flat fading (single tap)
      */
 
     cx_fmat H(randn<fmat>(uecfg->UE_ANT_NUM, bscfg->BS_ANT_NUM),
         randn<fmat>(uecfg->UE_ANT_NUM, bscfg->BS_ANT_NUM));
-    H = H / abs(H).max();
+    H = (1/sqrt(2)) * H;
     fmat_dst = fmat_src * H;
 }
