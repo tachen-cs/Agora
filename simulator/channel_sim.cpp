@@ -27,19 +27,6 @@ static void simd_convert_float_to_short(
     }
 }
 
-static inline void print_mat(cx_fmat c)
-{
-    std::stringstream so;
-    for (size_t i = 0; i < c.n_cols; i++) {
-        so << "row" << i << " = [";
-        for (size_t j = 0; j < c.n_rows; j++)
-            so << std::fixed << std::setw(5) << std::setprecision(3)
-               << c.at(j, i).real() << "+" << c.at(j, i).imag() << "i ";
-        so << "];\n";
-    }
-    so << std::endl;
-    std::cout << so.str();
-}
 
 ChannelSim::ChannelSim(Config* config_bs, Config* config_ue,
     size_t bs_thread_num, size_t user_thread_num, size_t worker_thread_num,
@@ -109,7 +96,9 @@ ChannelSim::ChannelSim(Config* config_bs, Config* config_ue,
     // initialize channel as random matrix of size uecfg->UE_ANT_NUM * bscfg->BS_ANT_NUM
     cx_fmat H(randn<fmat>(uecfg->UE_ANT_NUM, bscfg->BS_ANT_NUM),
         randn<fmat>(uecfg->UE_ANT_NUM, bscfg->BS_ANT_NUM));
-    channel = H / abs(H).max();
+    channel_orig = H / abs(H).max();
+    // Initialize channel
+    channel = new Channel(config_bs, config_ue);
 
     for (size_t i = 0; i < worker_thread_num; i++) {
         task_ptok[i] = new moodycamel::ProducerToken(message_queue_);
@@ -469,13 +458,29 @@ void ChannelSim::do_tx_bs(int tid, size_t tag)
         reinterpret_cast<float*>(fmat_src.memptr()),
         2 * bscfg->sampsPerSymbol * uecfg->UE_ANT_NUM);
 
-    cx_fmat fmat_dst = fmat_src * channel;
+
+
+
+    // initialize channel as random matrix of size uecfg->UE_ANT_NUM * bscfg->BS_ANT_NUM
+    //cx_fmat H(randn<fmat>(uecfg->UE_ANT_NUM, bscfg->BS_ANT_NUM),
+    //    randn<fmat>(uecfg->UE_ANT_NUM, bscfg->BS_ANT_NUM));
+
+
+
+    
+    cx_fmat fmat_dst = fmat_src * channel_orig;
     // add 30dB SNR noise
     cx_fmat noise(1e-3 * randn<fmat>(uecfg->sampsPerSymbol, bscfg->BS_ANT_NUM),
         1e-3 * randn<fmat>(uecfg->sampsPerSymbol, bscfg->BS_ANT_NUM));
     fmat_dst += noise;
+    
     if (kPrintChannelOutput)
-        print_mat(fmat_dst);
+        print_cxmat(fmat_dst);
+    
+
+    // Apply Channel
+    // apply_chan(const cx_fmat& fmat_src)
+    channel->apply_chan(fmat_src, fmat_dst);
 
     auto* dst_ptr = reinterpret_cast<short*>(&tx_buffer_bs[total_offset_bs]);
     simd_convert_float_to_short(reinterpret_cast<float*>(fmat_dst.memptr()),
@@ -524,14 +529,14 @@ void ChannelSim::do_tx_user(int tid, size_t tag)
     simd_convert_short_to_float(src_ptr,
         reinterpret_cast<float*>(fmat_src.memptr()),
         2 * bscfg->sampsPerSymbol * bscfg->BS_ANT_NUM);
-
-    cx_fmat fmat_dst = fmat_src * channel.st() / std::sqrt(bscfg->BS_ANT_NUM);
+    // OBCH XXX FIXME
+    cx_fmat fmat_dst = fmat_src * channel_orig.st() / std::sqrt(bscfg->BS_ANT_NUM);
     // add 30dB SNR noise
     cx_fmat noise(1e-3 * randn<fmat>(uecfg->sampsPerSymbol, bscfg->UE_ANT_NUM),
         1e-3 * randn<fmat>(uecfg->sampsPerSymbol, bscfg->UE_ANT_NUM));
     fmat_dst += noise;
     if (kPrintChannelOutput)
-        print_mat(fmat_dst);
+        print_cxmat(fmat_dst);
 
     auto* dst_ptr = reinterpret_cast<short*>(&tx_buffer_ue[total_offset_ue]);
     simd_convert_float_to_short(reinterpret_cast<float*>(fmat_dst.memptr()),
